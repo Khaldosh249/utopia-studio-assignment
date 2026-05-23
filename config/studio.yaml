@@ -1,0 +1,77 @@
+studio_timezone: "Asia/Qatar"  # UTC+3, no DST
+
+# Time-of-day bands (in Doha time)
+time_ranges:
+  morning:
+    start: "08:00"
+    end: "12:00"
+  afternoon:
+    start: "12:00"
+    end: "17:00"
+  evening:
+    start: "17:00"
+    end: "20:00"
+  any:
+    start: "08:00"
+    end: "20:00"
+
+# Recurring studio meetings — used for config-based conflict detection
+# day: 0=Mon 1=Tue 2=Wed 3=Thu 4=Fri (weekday index)
+recurring_meetings:
+  - name: "Directors Planning"
+    day: 0  # Monday
+    start: "09:00"
+    duration_minutes: 60
+  - name: "Studio Stand-up"
+    day: null  # daily Mon–Fri
+    start: "13:00"
+    duration_minutes: 30
+  - name: "PODS Pipeline Review"
+    day: 2  # Wednesday
+    start: "11:00"
+    duration_minutes: 60
+  - name: "QDB Weekly"
+    day: 0  # Monday
+    start: "14:00"
+    duration_minutes: 60
+  - name: "Directors Close"
+    day: 4  # Friday
+    start: "16:00"
+    duration_minutes: 60
+
+# Fellow availability: only available Monday–Wednesday (0=Mon, 2=Wed)
+fellow_available_days: [0, 1, 2]
+
+# Partner timezone bands (IANA names) and default working hours (local time)
+partner_tz_bands:
+  - label: "GMT"
+    iana: "Europe/London"
+    work_start: "09:00"
+    work_end: "18:00"
+  - label: "GMT+1"
+    iana: "Europe/Paris"
+    work_start: "09:00"
+    work_end: "18:00"
+  - label: "GMT+8"
+    iana: "Asia/Singapore"
+    work_start: "09:00"
+    work_end: "18:00"
+
+# Default working hours for the studio (Doha time) when no specific rule applies
+default_work_start: "08:00"
+default_work_end: "20:00"
+
+# Buffer added around recurring meetings when checking conflicts (minutes)
+default_buffer_minutes: 0
+
+# Roles that have restricted availability
+role_rules:
+  fellow:
+    available_days: [0, 1, 2]  # Mon–Wed only
+    work_start: "09:00"
+    work_end: "17:00"
+    timezone: "Asia/Qatar"
+  partner:
+    available_days: [0, 1, 2, 3, 4]  # full week
+  team:
+    available_days: [0, 1, 2, 3, 4]
