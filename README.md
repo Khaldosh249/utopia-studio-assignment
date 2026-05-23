@@ -36,7 +36,7 @@ SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
-OAUTH_REDIRECT_URI=http://localhost:8080/oauth/callback
+GOOGLE_REDIRECT_URI=http://localhost:8080/oauth/callback
 ```
 
 ### Google OAuth callback (for connecting calendars)
@@ -45,7 +45,7 @@ The bot starts a local FastAPI server on port 8080 for the OAuth redirect. For m
 
 ```bash
 ngrok http 8080
-# then set OAUTH_REDIRECT_URI to your ngrok URL + /oauth/callback
+# then set GOOGLE_REDIRECT_URI to your ngrok URL + /oauth/callback
 ```
 
 ---
