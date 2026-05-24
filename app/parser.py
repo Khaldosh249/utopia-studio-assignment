@@ -45,6 +45,10 @@ recurring: true only if the person explicitly requests a recurring/repeating mee
 
 notes: Any important context to include in the invite (purpose, agenda items, etc.). Keep it brief.
 
+explicit_time: Exact time in 24h HH:MM when the user names a specific time. Only set when stated.
+
+explicit_time_tz: IANA tz the explicit_time is expressed in. Set only when the user phrases it as someone's local time — e.g. "3pm his time", "3pm London time", "15:00 their time". Use the IANA tz of that person or location. Null means Doha time (Asia/Qatar).
+
 Important rules:
 - Do NOT invent emails or timezones not stated in the request.
 - If a person is described by a team name ("Radical Asia team"), use that as the name.
@@ -85,6 +89,15 @@ _TOOL = {
             "explicit_time": {
                 "type": ["string", "null"],
                 "description": "Exact time in 24h HH:MM when the user names a specific time like '3pm', 'at 14:30', 'noon'. Null if not stated.",
+            },
+            "explicit_time_tz": {
+                "type": ["string", "null"],
+                "description": (
+                    "IANA tz the explicit_time is expressed in. "
+                    "Set when the user says '3pm London time', '3pm his time', '15:00 their time', or similar. "
+                    "Use the IANA tz of the referenced person or location (e.g. 'Europe/London', 'Asia/Singapore'). "
+                    "Null means the time is already in Doha time (Asia/Qatar)."
+                ),
             },
             "recurring": {"type": "boolean"},
             "notes":     {"type": ["string", "null"]},
@@ -178,6 +191,7 @@ def parse_request(
         relative_week=raw.get("relative_week"),
         preferred_time_range=raw.get("preferred_time_range", "any"),
         explicit_time=raw.get("explicit_time"),
+        explicit_time_tz=raw.get("explicit_time_tz"),
         recurring=raw.get("recurring", False),
         notes=raw.get("notes"),
     )

@@ -50,11 +50,19 @@ def schedule(
     duration = timedelta(minutes=_resolve_duration(request, prefs))
     buffer_mins = prefs.get("buffer_minutes", config.get("default_buffer_minutes", 0))
 
-    # 1. Resolve the date window
+    # 1. Resolve the date window.
+    # When the user gave an explicit time in a foreign tz, Claude's preferred_time_range
+    # was inferred from that foreign time (e.g. "12pm Singapore" → "afternoon"), not from
+    # the Doha equivalent. Discard it and search the full working day so the converted
+    # Doha time is actually inside the window.
+    effective_time_range = (
+        "any" if (request.explicit_time and request.explicit_time_tz)
+        else request.preferred_time_range
+    )
     window_start, window_end = resolve_window(
         preferred_day=request.preferred_day,
         relative_week=request.relative_week,
-        time_range=request.preferred_time_range,
+        time_range=effective_time_range,
     )
     # Respect no-meeting days preference
     no_mtg = prefs.get("no_meeting_days", [])
@@ -76,7 +84,7 @@ def schedule(
 
     # 2b. If the user named a specific time, check whether it is free
     explicit_time_note = _check_explicit_time(
-        request.explicit_time, window_start, duration, busy
+        request.explicit_time, request.explicit_time_tz, window_start, duration, busy
     )
 
     # 3. Generate + filter candidates
@@ -90,11 +98,28 @@ def schedule(
         slot_start += STEP
 
     if not candidates:
-        no_slot_warnings = [
-            f"No free slot found in {request.preferred_time_range} on "
-            f"{window_start.strftime('%A %d %b')} (Doha time). "
-            "Try a different day or time range."
-        ]
+        if request.explicit_time and request.explicit_time_tz:
+            # Give a timezone-aware explanation
+            from zoneinfo import ZoneInfo
+            h, m = map(int, request.explicit_time.split(":"))
+            source_dt = datetime(
+                window_start.year, window_start.month, window_start.day,
+                h, m, 0, tzinfo=ZoneInfo(request.explicit_time_tz),
+            )
+            doha_equiv = source_dt.astimezone(DOHA_TZ)
+            tz_short = request.explicit_time_tz.split("/")[-1]
+            no_slot_warnings = [
+                f"{request.explicit_time} {tz_short} = *{doha_equiv.strftime('%H:%M')} Doha* — "
+                f"no free slot found on {window_start.strftime('%A %d %b')} (Doha time). "
+                "The time may fall outside working hours or be fully booked. "
+                "Try a different day."
+            ]
+        else:
+            no_slot_warnings = [
+                f"No free slot found in {request.preferred_time_range} on "
+                f"{window_start.strftime('%A %d %b')} (Doha time). "
+                "Try a different day or time range."
+            ]
         if conflict_details:
             no_slot_warnings.append(
                 "*Conflicts blocking that window:*\n" + "\n".join(f"• {c}" for c in conflict_details)
@@ -109,13 +134,32 @@ def schedule(
     # 4. Score candidates
     scored = sorted(candidates, key=lambda s: _score(s, duration, request, prefs, config, busy))
 
-    # 5. Determine if we should auto-propose or show a picker
-    #    Show picker when the user named a specific time and that time is blocked.
+    # If the user asked for a specific time that is free, honour it exactly — don't let
+    # the scoring algorithm pick a different slot.
+    if request.explicit_time and explicit_time_note and explicit_time_note.startswith("✅"):
+        exact_doha = _to_explicit_doha_dt(request, window_start)
+        if exact_doha:
+            exact = exact_doha.replace(second=0, microsecond=0)
+            if exact in candidates:
+                scored = [exact] + [c for c in scored if c != exact]
+
+    # 5. Determine if we should auto-propose or show a picker.
+    #    Show picker when the user named a specific time that is blocked OR falls
+    #    outside working hours (so we don't silently schedule at a random time).
     show_picker = bool(
         request.explicit_time
         and explicit_time_note
-        and "conflicts" in explicit_time_note
+        and ("conflicts" in explicit_time_note or "outside studio hours" in explicit_time_note)
     )
+
+    # When the requested time is outside studio hours, offer it as the first pick option
+    # (prepend to scored so it appears at the top of the picker) if it isn't blocked.
+    if show_picker and explicit_time_note and "outside studio hours" in explicit_time_note:
+        explicit_doha = _to_explicit_doha_dt(request, window_start)
+        if explicit_doha:
+            explicit_doha = explicit_doha.replace(second=0, microsecond=0)
+            if not _has_conflict(explicit_doha, explicit_doha + duration, busy, buffer_mins):
+                scored = [explicit_doha] + [c for c in scored if c != explicit_doha]
 
     warnings: list[str] = _collect_warnings(request, config)
 
@@ -353,33 +397,72 @@ def _conflict_details_in_window(
     return details
 
 
+def _to_explicit_doha_dt(request: MeetingRequest, window_start: datetime) -> datetime | None:
+    """Return the explicit_time as a Doha-aware datetime, converting from explicit_time_tz if set."""
+    if not request.explicit_time:
+        return None
+    try:
+        h, m = map(int, request.explicit_time.split(":"))
+        if request.explicit_time_tz:
+            from zoneinfo import ZoneInfo
+            source_dt = datetime(
+                window_start.year, window_start.month, window_start.day,
+                h, m, 0, tzinfo=ZoneInfo(request.explicit_time_tz),
+            )
+            return source_dt.astimezone(DOHA_TZ)
+        return window_start.replace(hour=h, minute=m, second=0, microsecond=0)
+    except (ValueError, AttributeError):
+        return None
+
+
 def _check_explicit_time(
     explicit_time: str | None,
+    explicit_time_tz: str | None,
     window_start: datetime,
     duration: timedelta,
     busy: list[BusyInterval],
 ) -> str | None:
     """
     If the user named a specific time, return a note explaining whether it's free or blocked.
+    When explicit_time_tz is set, converts from that tz to Doha before checking.
     Returns None if no explicit time was requested.
     """
     if not explicit_time:
         return None
     try:
         h, m = map(int, explicit_time.split(":"))
-        req_start = window_start.replace(hour=h, minute=m, second=0, microsecond=0)
+        if explicit_time_tz:
+            from zoneinfo import ZoneInfo
+            source_dt = datetime(
+                window_start.year, window_start.month, window_start.day,
+                h, m, 0, tzinfo=ZoneInfo(explicit_time_tz),
+            )
+            req_start = source_dt.astimezone(DOHA_TZ)
+            tz_short = explicit_time_tz.split("/")[-1]
+            display = f"{explicit_time} {tz_short} ({req_start.strftime('%H:%M')} Doha)"
+        else:
+            req_start = window_start.replace(hour=h, minute=m, second=0, microsecond=0)
+            display = explicit_time
         req_end = req_start + duration
     except (ValueError, AttributeError):
         return None
 
+    # Warn if outside the studio working day, but still allow the user to pick it
+    from datetime import time as dtime
+    if not (dtime(8, 0) <= req_start.time() < dtime(20, 0)):
+        return (
+            f"⚠️ *{display}* is outside studio hours (08:00–20:00 Doha) — "
+            f"you can still select it below or choose a different slot"
+        )
+
     blockers = [b for b in busy if intervals_overlap(req_start, req_end, b.start, b.end)]
     if not blockers:
-        return f"✅ Your requested time *{explicit_time}* is free"
+        return f"✅ Your requested time *{display}* is free"
 
     b = blockers[0]
     label = b.label or b.source
     return (
-        f"⚠️ *{explicit_time}* conflicts with *{label}* "
+        f"⚠️ *{display}* conflicts with *{label}* "
         f"({b.start.strftime('%H:%M')}–{b.end.strftime('%H:%M')})"
     )
 

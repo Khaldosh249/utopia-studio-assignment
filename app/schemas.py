@@ -25,6 +25,11 @@ class MeetingRequest(BaseModel):
         description="Specific time requested in 24h HH:MM format, e.g. '15:00' for '3pm'. "
                     "Only set when the user names an exact time.",
     )
+    explicit_time_tz: str | None = Field(
+        None,
+        description="IANA tz the explicit_time is expressed in, e.g. 'Europe/London' when the "
+                    "user says '3pm London time' or '3pm his time'. None means Doha (Asia/Qatar).",
+    )
     recurring: bool = False
     notes: str | None = None
 
